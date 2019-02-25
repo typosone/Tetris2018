@@ -80,61 +80,100 @@ phina.define('MainScene', {
         this.time = 0;
         this.downInterval = 1000;
         this.backgroundColor = 'gray';
-        this.blocks = [[]];
+        this.blocks = Array.range(20).map(() => []);
+
         this.mostBottom = false;
 
         this.current = Tetromino(Random.randint(0, 6), 4, 0).addChildTo(this);
     },
-
 
     update: function (app) {
         const key = app.keyboard;
 
         if (key.getKeyDown('space')) {
             this.current.rotateCW();
-            this.fixPosition();
+            if (!this.validPosition()) {
+                this.current.rotateCCW();
+            }
         }
         if (key.getKeyDown('shift')) {
             this.current.rotateCCW();
-            this.fixPosition();
+            if (!this.validPosition()) {
+                this.current.rotateCW();
+            }
         }
         if (key.getKeyDown('right')) {
             this.current.moveRight();
-            this.fixPosition();
+            if (!this.validPosition()) {
+                this.current.moveLeft();
+            }
         }
         if (key.getKeyDown('left')) {
             this.current.moveLeft();
-            this.fixPosition();
+            if (!this.validPosition()) {
+                this.current.moveRight();
+            }
+        }
+        if (key.getKeyDown('down')) {
+            this.current.moveDown();
+            if (!this.validPosition()) {
+                this.current.moveUp();
+                this.mostBottom = true;
+            } else {
+                this.time = 0;
+            }
         }
 
         this.time += app.deltaTime;
         if (this.time / this.downInterval >= 1) {
-            if (this.mostBottom) {
-                // フラグが立っていれば固定
-                this.current.blocks.forEach(block => {
-                    this.blocks[block.y].append(block.x);
-                });
+            this.current.moveDown();
+            if (!this.validPosition()) {
+                this.current.moveUp();
+                if (this.mostBottom) {
+                    // フラグが立っていれば固定
+                    this.current.blocks.forEach(block => {
+                        this.blocks[block.y].push(
+                            Sprite("blocks", BLOCK_SIZE, BLOCK_SIZE)
+                                .setFrameIndex(this.current.type, BLOCK_SIZE, BLOCK_SIZE)
+                                .addChildTo(this)
+                                .setPosition(
+                                    GRID.x.span(block.x) + BLOCK_OFFSET,
+                                    GRID.y.span(block.y) + BLOCK_OFFSET
+                                )
+                        )
+                    });
+                    this.current.reset(Random.randint(0, 6), 4, 0);
+                    this.mostBottom = false;
+                } else {
+                    this.mostBottom = true;
+                }
             } else {
-                // フラグが立ってない場合は1段落下処理
-                this.current.moveDown();
-                this.fixPosition();
+                this.mostBottom = false;
             }
             this.time -= this.downInterval;
         }
     },
-    fixPosition: function () {
-        if (this.current.right > SCREEN_WIDTH) {
-            this.current.moveLeft();
+
+    validPosition: function () {
+        if (this.current.right >= BLOCK_NUM_W) {
+            return false;
         }
-        if (this.current.bottom > SCREEN_HEIGHT) {
-            this.current.moveUp();
-            this.mostBottom = true;
-        } else {
-            this.mostBottom = false;
+        if (this.current.bottom >= BLOCK_NUM_H) {
+            return false;
         }
         if (this.current.left < 0) {
-            this.current.moveRight();
+            return false;
         }
+        let isCollide = this.current.blocks.some(block => {
+            if (block.y < 0) {
+                return false;
+            }
+            return this.blocks[block.y].some(fixedBlock => {
+                return fixedBlock.x === (GRID.x.span(block.x) + BLOCK_OFFSET)
+            })
+        });
+
+        return !isCollide;
     }
 });
 
@@ -142,19 +181,24 @@ phina.define('Tetromino', {
     superClass: 'DisplayElement',
 
     _accessor: {
+        top: {
+            get: function () {
+                return this.gy + this._top;
+            }
+        },
         right: {
             get: function () {
-                return this.x + this._right * BLOCK_SIZE;
+                return this.gx + this._right;
             }
         },
         bottom: {
             get: function () {
-                return this.y + this._bottom * BLOCK_SIZE;
+                return this.gy + this._bottom;
             }
         },
         left: {
             get: function () {
-                return this.x + this._left * BLOCK_SIZE;
+                return this.gx + this._left;
             }
         },
         blocks: {
@@ -188,33 +232,46 @@ phina.define('Tetromino', {
             block.addChildTo(this);
         });
         Sprite("blocks", BLOCK_SIZE, BLOCK_SIZE).setFrameIndex(this.type, BLOCK_SIZE, BLOCK_SIZE).addChildTo(this);
-        this.adjustRelativeBlocks();
+        this.resetRelativeBlocks();
     },
+
     moveUp: function () {
         this.gy--;
-        this.positionUpdate();
     },
+
     moveRight: function () {
         this.gx++;
-        this.positionUpdate();
     },
+
     moveDown: function () {
         this.gy++;
-        this.positionUpdate();
     },
+
     moveLeft: function () {
         this.gx--;
-        this.positionUpdate();
     },
+
     rotateCW: function () {
         this.rotate = (this.rotate + 1) % 4;
-        this.adjustRelativeBlocks();
+        this.resetRelativeBlocks();
     },
+
     rotateCCW: function () {
         this.rotate = (this.rotate + 3) % 4;
-        this.adjustRelativeBlocks();
+        this.resetRelativeBlocks();
     },
-    adjustRelativeBlocks: function () {
+
+    reset: function (type, gx, gy) {
+        this.type = type;
+        this.gx = gx;
+        this.gy = gy;
+        this.children.forEach(block => {
+            block.setFrameIndex(this.type, BLOCK_SIZE, BLOCK_SIZE);
+        });
+        this.resetRelativeBlocks();
+    },
+
+    resetRelativeBlocks: function () {
         this._top = 0;
         this._right = 0;
         this._bottom = 0;
@@ -238,12 +295,14 @@ phina.define('Tetromino', {
             }
         });
     },
+
     positionUpdate() {
         this.x = GRID.x.span(this.gx) + BLOCK_OFFSET;
         this.y = GRID.y.span(this.gy) + BLOCK_OFFSET;
     },
-    update: function (app) {
 
+    update: function (app) {
+        this.positionUpdate();
     }
 });
 
